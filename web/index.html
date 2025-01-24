@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0"
+    />
+    <meta http-equiv="X-UA-Compatible" content="ie=edge" />
+    <title>Document</title>
+    <style>
+      div {
+        margin-bottom: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div>
+      <button id="stream">流式分批下载</button>
+      <span id="streamText">0</span>
+    </div>
+    <div>
+      <button id="all">流式全量下载</button>
+      <span id="allText">0</span>
+      
+    </div>
+    <div>
+      <a href="http://localhost:3000/files/download">标签下载</a>
+    </div>
+    <script>
+      const stream = document.getElementById('stream');
+      const all = document.getElementById('all');
+      stream.addEventListener('click', async () => {
+        const response = await fetch('http://localhost:3000/files/download', {
+          method: 'GET',
+        });
+
+        const contentDisposition = response.headers.get('Content-Disposition');
+        const fileName = contentDisposition
+          ? contentDisposition.split('filename=')[1].replace(/"/g, '')
+          : 'downloaded-file';
+        const contentLength = +response.headers.get('Content-Length') || 0; // 获取文件大小
+
+        const reader = response.body.getReader();
+        let receivedLength = 0;
+        const stream = new ReadableStream({
+          start(controller) {
+            function push() {
+              reader.read().then(({ done, value }) => {
+                if (done) {
+                  controller.close();
+                  return;
+                }
+                controller.enqueue(value);
+                receivedLength += value.length;
+
+                if (contentLength) {
+                  document.getElementById('streamText').textContent = (receivedLength / contentLength) * 100;
+                }
+                
+                push();
+              });
+            }
+            push();
+          },
+        });
+
+        const blob = await new Response(stream).blob();
+        const downloadUrl = URL.createObjectURL(blob);
+
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(downloadUrl);
+      });
+
+      all.addEventListener('click', async () => {
+        const response = await fetch('http://localhost:3000/files/download', {
+          method: 'GET',
+        });
+
+
+        const contentDisposition = response.headers.get('Content-Disposition');
+        const fileName = contentDisposition
+          ? contentDisposition.split('filename=')[1].replace(/"/g, '')
+          : 'downloaded-file';
+
+        const contentLength = +response.headers.get('Content-Length') || 0; // 获取文件大小
+        let receivedLength = 0;
+        const reader = response.body.getReader();
+        const chunks = [];
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          chunks.push(value); // 收集数据块
+          receivedLength += value.length;
+
+          // 更新进度条
+          if (contentLength) {
+            document.getElementById('allText').textContent = (receivedLength / contentLength) * 100;
+          }
+        }
+
+        // 将数据块合并成 Blob 并生成 URL
+        const blob = new Blob(chunks);
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        link.click();
+
+        URL.revokeObjectURL(url); // 释放 URL
+      });
+    </script>
+  </body>
+</html>
