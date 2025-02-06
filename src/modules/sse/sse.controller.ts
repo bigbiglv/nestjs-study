@@ -27,8 +27,7 @@ export class SseController {
   @Interval(5000)
   sendMessage() {
     const testMsg = '测试消息发送';
-    console.log('testMsg');
-    this.sseService.broadcastMessage(testMsg);
+    this.sseService.sendToAllInstances(testMsg);
     return { success: true, message: testMsg };
   }
 }

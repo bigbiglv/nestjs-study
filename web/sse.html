@@ -10,11 +10,20 @@
 <body>
 <button id="openBtn">开启链接</button>
 <button id="closeBtn">关闭链接</button>
+<div id="content">
+  
+</div>
   <script>
     const openBtn = document.getElementById('openBtn')
+    const content = document.getElementById('content')
     let source
     openBtn.addEventListener('click', () => {
       source = new EventSource('http://192.168.10.104:3000/sse/msg')
+      source.addEventListener('message', (e) => {
+        const p = document.createElement('p')
+        p.append(e.data)
+        content.appendChild(p)
+      })
     })
 
     const closeBtn = document.getElementById('closeBtn')
