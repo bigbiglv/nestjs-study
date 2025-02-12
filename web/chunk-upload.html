@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh_cn">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>file-slice</title>
+</head>
+
+<body>
+<input type="file" name="file" id="file">
+
+<p id="status">ready</p>
+<button id="startBtn" type="button">开始上传</button>
+<button id="pauseBtn" type="button">暂停上传</button>
+<button id="resumeBtn" type="button">继续上传</button>
+
+<script>
+  const fileInput = document.getElementById('file')
+  fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0]
+    const fileUploader = new FileUploader(file, { api })
+
+    document.getElementById('startBtn').addEventListener('click', () => {
+      fileUploader.upload()
+    })
+
+    document.getElementById('pauseBtn').addEventListener('click', () => {
+      fileUploader.pause()
+    })
+
+    document.getElementById('resumeBtn').addEventListener('click', () => {
+      fileUploader.resume()
+    })
+
+  })
+
+
+
+  // 上传接口
+  async function api(params) {
+    console.log('params', params.get('chunk'))
+    try {
+      const response = await fetch('http://192.168.10.104:3000/files/upload/chunk', {
+        method: 'POST',
+        body: params,
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const res = await response.json();
+      console.log('res', res);
+      return res;
+    } catch (error) {
+      console.error('Request Failed:', error);
+      return { error: true, message: 'Upload failed' };
+    }
+  }
+
+
+  class FileUploader {
+    constructor(file, options = {}) {
+      this.file = file
+      const { chunkSize = 5, api, onProgress = () => { }, maxConcurrency = 5 } = options
+      this.chunkSize = chunkSize * 1024 * 1024
+
+      // 上传状态 ready: 准备上传 uploading: 上传中 pausing: 暂停中 paused: 暂停 failed: 上传失败 completed: 全部上传完成
+      this.status = 'ready'
+
+      this.uploadApi = api
+      // 总分片数
+      this.totalChunks = 0
+      // 已上传的分片数
+      this.uploadedChunks = 0
+      // 失败的任务分片数据
+      this.failedTasks = []
+      this.onProgress = onProgress
+
+      // 最大并发数
+      this.maxConcurrency = maxConcurrency
+      // 上传队列
+      this.queue = []
+      // 当前正在上传的任务数
+      this.activeTasks = 0
+    }
+
+    /** 开始上传 */
+    async upload() {
+      const chunks = this._createChunks()
+      this._setStatus('uploading')
+
+      // 初始化任务队列
+      this.queue = chunks.map((chunk) => () => this._uploadChunk(chunk));
+      const uploadPromises = [];
+
+      // 创建最大并发数量的任务
+      for (let i = 0;i < this.maxConcurrency;i++) {
+        uploadPromises.push(this._processQueue());
+      }
+
+      await Promise.all(uploadPromises);
+
+      if (this.failedTasks.length) {
+        // 重试一次失败的分片任务
+        try {
+          await this.retry()
+        } catch (err) {
+          throw new Error('失败了一部分切片')
+        }
+        return
+      }
+      if (!this.queue.length) this._setStatus('completed')
+
+    }
+
+    /** 失败的分片进行重传 */
+    async retry() {
+      if (!this.failedTasks.length) return console.warn('没有失败的任务');
+      if (!navigator.onLine) return console.error('当前网络不可用，请检查网络连接后重试');
+
+      this.queue = [...this.failedTasks]; // 将失败的上传任务重新加入队列
+      this.failedTasks = [];
+      this._setStatus('uploading');
+
+      const retryPromises = [];
+      for (let i = 0;i < this.maxConcurrency;i++) {
+        retryPromises.push(this._processQueue());
+      }
+
+      await Promise.all(retryPromises);
+
+      if (this.failedTasks.length > 0) {
+        this._setStatus('failed');
+        console.error(`仍有 ${this.failedTasks.length} 个分片未上传成功`);
+      } else {
+        this._setStatus('completed');
+      }
+    }
+
+    /** 处理上传队列 */
+    async _processQueue() {
+      while (this.queue.length > 0) {
+        if (this.status !== 'uploading') break; // 如果暂停或状态变更，停止处理
+
+        const task = this.queue.shift(); // 从队列中取出一个任务（上传分片函数）
+        this.activeTasks++; // 增加活跃任务数
+
+        try {
+          await task(); // 执行上传任务
+          this.uploadedChunks++;
+          this.onProgress(this.uploadedChunks / this.totalChunks);
+        } catch (err) {
+          // 上传失败，将分片重新放入失败列表
+          this.failedTasks.push(task);
+        } finally {
+          this.activeTasks--; // 任务完成，减少活跃任务数
+        }
+      }
+    }
+    /** 暂停上传 */
+    pause() {
+      if (this.status !== 'uploading') return;
+      console.log('暂停')
+      this._setStatus('paused');
+    }
+
+    /** 恢复上传 */
+    async resume() {
+      if (this.status !== 'paused') return;
+      console.log('恢复')
+      this._setStatus('uploading');
+      const resumePromises = [];
+      for (let i = 0;i < this.maxConcurrency;i++) {
+        resumePromises.push(this._processQueue());
+      }
+
+      await Promise.all(resumePromises);
+
+      if (this.failedTasks.length > 0) {
+        this._setStatus('failed');
+        console.error(`仍有 ${this.failedTasks.length} 个分片未上传成功`);
+      } else {
+        this._setStatus('completed');
+      }
+    }
+
+    _setStatus(status) {
+      this.status = status
+      document.getElementById('status').innerText = status
+    }
+
+    /** 上传分片 */
+    async _uploadChunk(chunk) {
+      if (!this.uploadApi) throw new Error("上传接口未定义");
+      const formData = new FormData();
+      formData.append("chunkFile", chunk.chunk);
+      formData.append("index", chunk.index);
+      formData.append("total", this.totalChunks);
+      formData.append("fileName", this.file.name);
+      await this.uploadApi(formData);
+    }
+
+    /** 创建切片 */
+    _createChunks() {
+      const file = this.file
+      const chunkSize = this.chunkSize
+      // 切片集合
+      const chunks = []
+      // 切片数量
+      this.totalChunks = Math.ceil(file.size / chunkSize)
+      for (let i = 0;i < this.totalChunks;i++) {
+        const start = i * chunkSize;
+        const end = Math.min(start + chunkSize, file.size);
+        chunks.push({
+          index: i,
+          chunk: file.slice(start, end, file.type),
+        });
+      }
+      return chunks
+    }
+  }
+
+
+</script>
+</body>
+
+</html>

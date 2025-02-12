@@ -31,8 +31,7 @@ export class FileController {
     @Res() res: Response,
   ) {
     try {
-      const uploadDir = path.join(process.cwd(), 'src/uploads/');
-      const fileInfo = this.fileService.saveFile(file, uploadDir);
+      const fileInfo = this.fileService.saveFile(file);
 
       return res.status(HttpStatus.CREATED).send({
         message: '文件上传成功',
@@ -43,17 +42,28 @@ export class FileController {
     }
   }
 
+  @Post('upload/chunk')
+  @UseInterceptors(FileInterceptor('chunkFile'))
+  uploadFileChunk(
+    @Req() req: Request,
+    @Res() res: Response,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    const { index, total, fileName } = req.body;
+    const result = this.fileService.saveChunk({ file, index, total, fileName });
+    return res.status(HttpStatus.CREATED).send(result);
+  }
+
   @Get('download')
   downloadFile(@Req() req: Request, @Res() res: Response) {
     const filePath = path.join(process.cwd(), 'src/files/', '19m.zip'); // 文件的绝对路径
-    const fileName = '19m.zip'; // 下载时显示的文件名
 
     // 检查文件是否存在
     if (!fs.existsSync(filePath)) {
       return res.status(HttpStatus.NOT_FOUND).send('文件不存在');
     }
-    const stats = fs.statSync(filePath);
-    const fileStream = fs.createReadStream(filePath);
+    const { stats, fileStream, fileName } =
+      this.fileService.getFileStream(filePath);
     // 设置响应头
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Disposition', `attachment; filename=${fileName}`);
@@ -68,7 +78,6 @@ export class FileController {
 
     // 管道化文件流到响应
     fileStream.pipe(res).on('error', (err) => {
-      console.error('文件下载出错:', err);
       if (!res.headersSent) {
         res.status(HttpStatus.INTERNAL_SERVER_ERROR).send('文件下载出错');
       }
