@@ -133,7 +133,11 @@
           this.onProgress(this.finishCount / this.totalCount);
         } catch (err) {
           // 暂停中失败的任务不直接进入失败列表 而是重新添加到任务列表
-          if(this.status === 'pausing') return this.taskList.push(task)
+          if(this.status === 'pausing') {
+            this.taskList.push(task)
+            // return 会终止整个_queue
+            continue
+          }
           // 上传失败，将分片重新放入失败列表
           this.failedTasks.push(task)
         } finally {
