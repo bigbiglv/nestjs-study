@@ -13,13 +13,11 @@ export class FileService {
     try {
       const fileName = path.basename(chunksDir);
       const writeStream = fs.createWriteStream(path.join(outputPath, fileName));
-
-      for (let i = 0; i < total - 1; i++) {
+      for (let i = 0; i < total; i++) {
         const chunkPath = path.join(chunksDir, String(i));
         const data = fs.readFileSync(chunkPath);
         writeStream.write(data);
       }
-
       writeStream.end();
 
       // 删除临时分片目录
@@ -57,25 +55,25 @@ export class FileService {
     const filePath = path.join(chunksPath, String(index));
     fs.writeFileSync(filePath, buffer);
     // 校验分片数
-    const missChunks = this.checkChunks(chunksPath, Number(total));
-    if (missChunks.length) return { message: 'ok', data: missChunks };
+    const missChunks = this.getMissChunks(chunksPath, Number(total));
     // 合并
-    return this.mergeChunks(chunksPath, Number(total));
+    if (!missChunks.length) return this.mergeChunks(chunksPath, Number(total));
+    return { message: 'ok', data: missChunks };
   }
 
-  /** 校验切片数量 */
-  checkChunks(chunkDir: string, chunkLength: number) {
-    const files = fs.readdirSync(chunkDir);
-    const chunkFiles = files
-      .filter((file) => {
-        const index = parseInt(path.basename(file), 10);
-        return !isNaN(index); // 只保留文件名是数字的切片文件
-      })
-      .sort((a, b) => parseInt(a, 10) - parseInt(b, 10)); // 排序确保下标顺序
-    const missChunks = [];
-    for (let i = 0; i < chunkLength - 1; i++) {
-      const chunkName = Number(chunkFiles[i]);
-      if (Number.isNaN(chunkName) || chunkName !== i) missChunks.push(i);
+  /** 缺少的切片数 */
+  getMissChunks(chunkDir: string, chunkLength: number) {
+    const fileNames = fs.readdirSync(chunkDir);
+    const missChunks = [...Array(chunkLength).keys()];
+    for (let i = 0; i < fileNames.length; i++) {
+      const chunkName = Number(fileNames[i]);
+      // 异常文件名 直接删除
+      if (Number.isNaN(chunkName)) {
+        fs.unlinkSync(path.join(chunkDir, fileNames[i]));
+        continue;
+      }
+      const index = missChunks.findIndex((chunk) => chunk === chunkName);
+      missChunks.splice(index, 1);
     }
     return missChunks;
   }
